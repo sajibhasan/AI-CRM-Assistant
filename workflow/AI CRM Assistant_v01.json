@@ -1,0 +1,532 @@
+{
+  "name": "AI CRM Assistant",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -800,
+        -48
+      ],
+      "id": "b41756ed-4d94-4fea-8d34-122770710bfa",
+      "name": "When chat message received",
+      "webhookId": "3cf9ae21-f248-43ac-b915-6f4140a79225"
+    },
+    {
+      "parameters": {
+        "model": "qwen2.5:1.5b",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOllama",
+      "typeVersion": 1,
+      "position": [
+        -624,
+        160
+      ],
+      "id": "6603662b-9302-4172-aaf8-89b1e65855d5",
+      "name": "Ollama Chat Model",
+      "credentials": {
+        "ollamaApi": {
+          "id": "mAkmGCCPFLGDj3Nb",
+          "name": "Ollama account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "systemMessage": "You are an AI CRM Assistant.\n\nExtract business information from the user's message.\n\nReturn ONLY valid JSON.\n\n{\n  \"name\": \"\",\n  \"email\": \"\",\n  \"company\": \"\",\n  \"country\": \"\",\n  \"role\": \"\",\n  \"budget\": 0,\n  \"urgency\": \"\",\n  \"industry\": \"\",\n  \"notes\": \"\",\n  \"reason\": \"\",\n  \"next_action\": \"\"\n}\n\nRules:\n\nBudget Rules:\n\n- Return budget as a NUMBER only.\n- Do not include currency.\n- Do not include USD, BDT, $, commas or text.\n\nExamples:\n\n25000 USD -> 25000\n$15,000 -> 15000\nBDT 500000 -> 500000\n\nIf no budget is mentioned, return 0.\n- Return only raw JSON.\n- Never use markdown.\nAlways return every field.\n\nIf a value is unknown, return:\n- \"\" for text fields\n- 0 for numeric fields\n\nNever omit any field.\n\n---\n\n\n```text\nIMPORTANT RULES\n\n- Return ONLY valid JSON.\n- Never use markdown.\n- Never use ```json.\n- Never explain your answer.\n- Never write any text before or after the JSON.\n- If a field is missing, return:\n  - \"\" for text fields\n  - 0 for numeric fields\n- Always return every field."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        -592,
+        -48
+      ],
+      "id": "c4c4ccbc-5ba5-4acd-ba62-60280d396bc0",
+      "name": "AI Lead Extractor"
+    },
+    {
+      "parameters": {
+        "jsCode": "let output = String($json.output || \"\").trim();\n\n// Remove any markdown fences\noutput = output\n  .replace(/```json/gi, \"\")\n  .replace(/```/g, \"\")\n  .trim();\n\nlet lead;\n\ntry {\n  lead = JSON.parse(output);\n} catch (error) {\n  return [{\n    json: {\n      is_valid: false,\n      validation_errors: [\"AI returned invalid JSON\"],\n      raw_output: output\n    }\n  }];\n}\n\n// ===========================\n// Business Scoring Engine\n// ===========================\n\nconst CONFIG = {\n  hotThreshold: 80,\n  warmThreshold: 50,\n\n  decisionMakerScore: 30,\n  budget20kScore: 30,\n  budget10kScore: 20,\n  budget5kScore: 10,\n\n  urgencyHighScore: 20,\n  urgencyMediumScore: 10,\n\n  companyScore: 10,\n  emailScore: 10,\n};\n\nlet score = 0;\n\n// Role\nconst role = (lead.role || \"\").toLowerCase();\n\nif (\n  role.includes(\"ceo\") ||\n  role.includes(\"cto\") ||\n  role.includes(\"founder\") ||\n  role.includes(\"owner\")\n) {\n  score += CONFIG.decisionMakerScore;\n}\n\n// Budget\nconst budget = parseFloat(\n  String(lead.budget || \"0\").replace(/[^0-9.]/g, \"\")\n);\n\nif (budget >= 20000) {\n  score += CONFIG.budget20kScore;\n} else if (budget >= 10000) {\n  score += CONFIG.budget10kScore;\n} else if (budget >= 5000) {\n  score += CONFIG.budget5kScore;\n}\n\n// Urgency\nconst urgency = (lead.urgency || \"\").toLowerCase();\n\nif (urgency === \"high\") {\n  score += CONFIG.urgencyHighScore;\n} else if (urgency === \"medium\") {\n  score += CONFIG.urgencyMediumScore;\n}\n\n// Company\nif (lead.company && lead.company.trim() !== \"\") {\n  score += CONFIG.companyScore;\n}\n\n// Email\nif (\n  lead.email &&\n  /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(lead.email)\n) {\n  score += CONFIG.emailScore;\n}\n\n\n// Save Score\nlead.lead_score = score;\n\n// Priority\nif (score >= CONFIG.hotThreshold) {\n  lead.priority = \"Hot\";\n} else if (score >= CONFIG.warmThreshold) {\n  lead.priority = \"Warm\";\n} else {\n  lead.priority = \"Cold\";\n}\n\nlead.is_valid = true;\nlead.validation_errors = [];\n\n// Name validation\nif (!lead.name || lead.name.trim() === \"\") {\n  lead.is_valid = false;\n  lead.validation_errors.push(\"Missing name\");\n}\n\n// Email validation\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\n\nif (!lead.email || !emailRegex.test(lead.email)) {\n  lead.is_valid = false;\n  lead.validation_errors.push(\"Invalid email\");\n}\n\nreturn [\n  {\n    json: lead\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -272,
+        -48
+      ],
+      "id": "a68198ae-bd4f-4648-bd07-f7c526461b38",
+      "name": "🧠 Lead Scoring Engine"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "933ab8d4-224d-4729-b94c-0607f43b5cd6",
+              "leftValue": "={{$json.is_valid}}",
+              "rightValue": 80,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -80,
+        -48
+      ],
+      "id": "707c1c8d-7dd6-4d63-b27a-2a434f606b66",
+      "name": "✅ Lead Validation"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "ed1b199c-e4b3-4684-9db1-fbdd9feb90d2",
+              "leftValue": "={{ $json.priority }}",
+              "rightValue": "Hot",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        176,
+        -192
+      ],
+      "id": "6442d981-a3ff-4282-b585-b9be5f03050d",
+      "name": "🔥 Hot Lead Check"
+    },
+    {
+      "parameters": {
+        "sendTo": "sajib001@gmail.com",
+        "subject": "=🚨 {{$json.priority}} Lead | {{$json.company}} | Score {{$json.lead_score}}\n{{\n$json.priority === \"Hot\"\n? \"🔥\"\n: $json.priority === \"Warm\"\n? \"🟡\"\n: \"⚪\"\n}}",
+        "message": "=<h2>🚀 New {{ $json.priority }} Lead</h2>\n\n<hr>\n\n<table style=\"border-collapse: collapse; width: 100%;\">\n<tr>\n<td><b>Name</b></td>\n<td>{{ $json.name }}</td>\n</tr>\n\n<tr>\n<td><b>Company</b></td>\n<td>{{ $json.company }}</td>\n</tr>\n\n<tr>\n<td><b>Email</b></td>\n<td>{{ $json.email }}</td>\n</tr>\n\n<tr>\n<td><b>Country</b></td>\n<td>{{ $json.country }}</td>\n</tr>\n\n<tr>\n<td><b>Role</b></td>\n<td>{{ $json.role }}</td>\n</tr>\n\n<tr>\n<td><b>Budget</b></td>\n<td>{{ $json.budget }}</td>\n</tr>\n\n<tr>\n<td><b>Lead Score</b></td>\n<td>{{ $json.lead_score }}/100</td>\n</tr>\n\n<tr>\n<td><b>Priority</b></td>\n<td><b>{{ $json.priority }}</b></td>\n</tr>\n</table>\n\n<hr>\n\n<p>This notification was automatically generated by the AI CRM Assistant.</p>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        640,
+        -128
+      ],
+      "id": "18954e46-e730-40b9-82d6-d8c11e90fd93",
+      "name": "📧 Send Hot Lead Alert",
+      "webhookId": "89e52692-c06c-4ee3-9ac3-39ebb588a6bc",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "CBBJFxms1n7BB5PX",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk",
+          "mode": "list",
+          "cachedResultName": "AI CRM Assistant",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Email": "={{ $('🧠 Lead Scoring Engine').item.json.name }}",
+            "Company": "={{ $('🧠 Lead Scoring Engine').item.json.company }}",
+            "Name": "={{ $('🧠 Lead Scoring Engine').item.json.name }}",
+            "Country": "={{ $('🧠 Lead Scoring Engine').item.json.country }}",
+            "Notes": "={{ $('🧠 Lead Scoring Engine').item.json.notes }}",
+            "Lead Score": "={{ $('🧠 Lead Scoring Engine').item.json.lead_score }}",
+            "Priority": "={{ $('🧠 Lead Scoring Engine').item.json.priority }}",
+            "Reason": "={{ $('🧠 Lead Scoring Engine').item.json.reason }}",
+            "Next Action": "={{ $('🧠 Lead Scoring Engine').item.json.next_action }}",
+            "Created AT": "={{ $now }}"
+          },
+          "matchingColumns": [
+            "Email"
+          ],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Country",
+              "displayName": "Country",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Notes",
+              "displayName": "Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Lead Score",
+              "displayName": "Lead Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Priority",
+              "displayName": "Priority",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reason",
+              "displayName": "Reason",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Next Action",
+              "displayName": "Next Action",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Created AT",
+              "displayName": "Created AT",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        960,
+        304
+      ],
+      "id": "28e4974b-80be-4537-a76e-604e2fc6ade9",
+      "name": "📊 CRM Database",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MT0aT12wMo3vFMax",
+          "name": "Google Sheets account 2"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "#STEP 1\nReceive incoming lead from chat/email.\n#STEP 2\nAI extracts structured lead information.\n#STEP 3\nBusiness scoring engine calculates lead score and validates the data.\n#STEP 4\nIf Hot Lead → Send Gmail Alert.\n#STEP 5\nStore lead in CRM (Google Sheets).",
+        "height": 224,
+        "width": 416,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        336,
+        -528
+      ],
+      "typeVersion": 1,
+      "id": "86804032-70b8-4bd2-855d-814fcd13b4d9",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk",
+          "mode": "list",
+          "cachedResultName": "AI CRM Assistant",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 121611255,
+          "mode": "list",
+          "cachedResultName": "Invalid Leads",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1rog5whZwCMdwa81PH02X4GOOnSieNgB-M-ElMWEGLYk/edit#gid=121611255"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Name": "={{ $json.name }}",
+            "Errors": "={{ $json.validation_errors }}",
+            "Company": "={{ $json.company }}",
+            "Email": "={{ $json.email }}",
+            "Date": "={{ $today }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Name",
+              "displayName": "Name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Email",
+              "displayName": "Email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Company",
+              "displayName": "Company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Errors",
+              "displayName": "Errors",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        192,
+        16
+      ],
+      "id": "e179be81-bd41-46a7-8bae-ee2b1c205aa4",
+      "name": "Append row in sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "MT0aT12wMo3vFMax",
+          "name": "Google Sheets account 2"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Lead Extractor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Lead Extractor",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Lead Extractor": {
+      "main": [
+        [
+          {
+            "node": "🧠 Lead Scoring Engine",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧠 Lead Scoring Engine": {
+      "main": [
+        [
+          {
+            "node": "✅ Lead Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Lead Validation": {
+      "main": [
+        [
+          {
+            "node": "🔥 Hot Lead Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔥 Hot Lead Check": {
+      "main": [
+        [
+          {
+            "node": "📧 Send Hot Lead Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📊 CRM Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📧 Send Hot Lead Alert": {
+      "main": [
+        [
+          {
+            "node": "📊 CRM Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 CRM Database": {
+      "main": [
+        []
+      ]
+    },
+    "Append row in sheet": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "bff29854-6ebf-44d1-ac9f-6074eb378388",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "b53b946cfcf5b354940b8f3dcece67e1ebdc4563b89ce763dbcf1df757933017"
+  },
+  "nodeGroups": [],
+  "id": "BkDR0pTOw37fgq6t",
+  "tags": []
+}
